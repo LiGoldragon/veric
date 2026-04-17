@@ -90,11 +90,11 @@
         "synth-core": "synth-core"
       },
       "locked": {
-        "lastModified": 1776452151,
-        "narHash": "sha256-vPglp+Zr59V8n7qlECNG131ANMlM6IYZo2kP296S2Cc=",
+        "lastModified": 1776453175,
+        "narHash": "sha256-H0I+FLenJKfgpYhJ8CFdN9LhlXJcZ6rLgSJWRDoUHww=",
         "owner": "LiGoldragon",
         "repo": "askic",
-        "rev": "b45a540a419683dacfe09e6a30e08ff7cbcab802",
+        "rev": "3961763f85909e4938f5bef343449f64761ce919",
         "type": "github"
       },
       "original": {
