@@ -450,4 +450,333 @@ mod tests {
         let errs = verify(vec![m]);
         assert!(errs.iter().any(|e| e.contains("out of range")));
     }
+
+    #[test]
+    fn const_i8_negative_in_range() {
+        let mut m = module("Test");
+        m.consts.push(ConstDef {
+            name: TypeName("N".into()),
+            visibility: Visibility::Public,
+            typ: TypeExpr::Named(TypeName("I8".into())),
+            value: LiteralValue::Int(-128),
+            span: Span { start: 0, end: 0 },
+        });
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn const_i8_out_of_range() {
+        let mut m = module("Test");
+        m.consts.push(ConstDef {
+            name: TypeName("N".into()),
+            visibility: Visibility::Public,
+            typ: TypeExpr::Named(TypeName("I8".into())),
+            value: LiteralValue::Int(200),
+            span: Span { start: 0, end: 0 },
+        });
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("out of range")));
+    }
+
+    #[test]
+    fn const_string_valid() {
+        let mut m = module("Test");
+        m.consts.push(ConstDef {
+            name: TypeName("Greeting".into()),
+            visibility: Visibility::Public,
+            typ: TypeExpr::Named(TypeName("String".into())),
+            value: LiteralValue::Str("hello".into()),
+            span: Span { start: 0, end: 0 },
+        });
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn const_bool_valid() {
+        let mut m = module("Test");
+        m.consts.push(ConstDef {
+            name: TypeName("Flag".into()),
+            visibility: Visibility::Public,
+            typ: TypeExpr::Named(TypeName("Bool".into())),
+            value: LiteralValue::Bool(true),
+            span: Span { start: 0, end: 0 },
+        });
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    // ── TypeExpr variant coverage ───────────────────────────
+
+    fn struct_with_type(name: &str, field_type: TypeExpr) -> StructDef {
+        StructDef {
+            name: TypeName(name.into()),
+            visibility: Visibility::Public,
+            generic_params: vec![], derives: vec![],
+            children: vec![StructChild::TypedField {
+                name: FieldName("Field".into()),
+                visibility: Visibility::Public,
+                typ: field_type,
+                span: Span { start: 0, end: 0 },
+            }],
+            span: Span { start: 0, end: 0 },
+        }
+    }
+
+    #[test]
+    fn type_ref_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Ref { inner: Box::new(TypeExpr::Named(TypeName("U32".into()))) }));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn type_ref_invalid_inner() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Ref { inner: Box::new(TypeExpr::Named(TypeName("Missing".into()))) }));
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("Missing")));
+    }
+
+    #[test]
+    fn type_boxed_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Boxed(Box::new(TypeExpr::Named(TypeName("String".into()))))));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn type_tuple_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Tuple { elements: vec![
+                TypeExpr::Named(TypeName("U32".into())),
+                TypeExpr::Named(TypeName("F64".into())),
+            ]}));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn type_tuple_invalid_element() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Tuple { elements: vec![
+                TypeExpr::Named(TypeName("U32".into())),
+                TypeExpr::Named(TypeName("Missing".into())),
+            ]}));
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("Missing")));
+    }
+
+    #[test]
+    fn type_array_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::Array {
+                element: Box::new(TypeExpr::Named(TypeName("U8".into()))),
+                size: 16,
+            }));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn type_fn_ptr_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::FnPtr {
+                params: vec![TypeExpr::Named(TypeName("U32".into()))],
+                return_: Box::new(TypeExpr::Named(TypeName("Bool".into()))),
+            }));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    #[test]
+    fn type_fn_ptr_invalid_return() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S",
+            TypeExpr::FnPtr {
+                params: vec![TypeExpr::Named(TypeName("U32".into()))],
+                return_: Box::new(TypeExpr::Named(TypeName("Missing".into()))),
+            }));
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("Missing")));
+    }
+
+    #[test]
+    fn type_unit_and_never_always_valid() {
+        let mut m = module("Test");
+        m.structs.push(struct_with_type("S1", TypeExpr::Unit));
+        m.structs.push(struct_with_type("S2", TypeExpr::Never));
+        assert!(verify(vec![m]).is_empty());
+    }
+
+    // ── Trait tier 3 extra checks ───────────────────────────
+
+    #[test]
+    fn trait_impl_param_count_mismatch() {
+        let mut m = module("Test");
+        m.enums.push(bare_enum("E", &["V"]));
+        // Decl has 2 params (self + arg)
+        let mut td = simple_trait("compute", &["compute"]);
+        td.signatures[0].params.push(Param::Named {
+            name: TypeName("X".into()),
+            typ: TypeExpr::Named(TypeName("U32".into())),
+        });
+        m.trait_decls.push(td);
+        // Impl has 1 param (self only)
+        m.trait_impls.push(simple_impl("compute", "E", &["compute"]));
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("params")));
+    }
+
+    #[test]
+    fn trait_impl_self_param_mismatch() {
+        let mut m = module("Test");
+        m.enums.push(bare_enum("E", &["V"]));
+        // Decl uses &self
+        m.trait_decls.push(simple_trait("update", &["update"]));
+        // Impl uses self (owned) — mismatch
+        let mut ti = simple_impl("update", "E", &["update"]);
+        ti.methods[0].params = vec![Param::OwnedSelf];
+        m.trait_impls.push(ti);
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("self parameter")));
+    }
+
+    #[test]
+    fn trait_impl_missing_associated_type() {
+        let mut m = module("Test");
+        m.enums.push(bare_enum("E", &["V"]));
+        let mut td = simple_trait("container", &[]);
+        td.associated_types.push(AssociatedTypeDef {
+            name: TypeName("Item".into()),
+            bounds: vec![],
+            default: None, // required — no default
+        });
+        m.trait_decls.push(td);
+        m.trait_impls.push(simple_impl("container", "E", &[]));
+        let errs = verify(vec![m]);
+        assert!(errs.iter().any(|e| e.contains("associated type 'Item'")));
+    }
+
+    // ── Cycle detection edges ───────────────────────────────
+
+    #[test]
+    fn three_module_cycle() {
+        let mut a = module("A");
+        a.enums.push(bare_enum("X", &["V"]));
+        a.exports.push(ExportItem::Type_(TypeName("X".into())));
+        a.imports.push(ModuleImport {
+            source: TypeName("C".into()),
+            names: vec![ImportItem::Type_(TypeName("Z".into()))],
+        });
+
+        let mut b = module("B");
+        b.enums.push(bare_enum("Y", &["V"]));
+        b.exports.push(ExportItem::Type_(TypeName("Y".into())));
+        b.imports.push(ModuleImport {
+            source: TypeName("A".into()),
+            names: vec![ImportItem::Type_(TypeName("X".into()))],
+        });
+
+        let mut c = module("C");
+        c.enums.push(bare_enum("Z", &["V"]));
+        c.exports.push(ExportItem::Type_(TypeName("Z".into())));
+        c.imports.push(ModuleImport {
+            source: TypeName("B".into()),
+            names: vec![ImportItem::Type_(TypeName("Y".into()))],
+        });
+
+        let errs = verify(vec![a, b, c]);
+        assert!(errs.iter().any(|e| e.contains("circular")));
+    }
+
+    #[test]
+    fn diamond_dependency_no_cycle() {
+        // A imports B and C, both import D — not a cycle
+        let mut d = module("D");
+        d.enums.push(bare_enum("Base", &["V"]));
+        d.exports.push(ExportItem::Type_(TypeName("Base".into())));
+
+        let mut b = module("B");
+        b.enums.push(bare_enum("X", &["V"]));
+        b.exports.push(ExportItem::Type_(TypeName("X".into())));
+        b.imports.push(ModuleImport {
+            source: TypeName("D".into()),
+            names: vec![ImportItem::Type_(TypeName("Base".into()))],
+        });
+
+        let mut c = module("C");
+        c.enums.push(bare_enum("Y", &["V"]));
+        c.exports.push(ExportItem::Type_(TypeName("Y".into())));
+        c.imports.push(ModuleImport {
+            source: TypeName("D".into()),
+            names: vec![ImportItem::Type_(TypeName("Base".into()))],
+        });
+
+        let mut a = module("A");
+        a.imports.push(ModuleImport {
+            source: TypeName("B".into()),
+            names: vec![ImportItem::Type_(TypeName("X".into()))],
+        });
+        a.imports.push(ModuleImport {
+            source: TypeName("C".into()),
+            names: vec![ImportItem::Type_(TypeName("Y".into()))],
+        });
+
+        let errs = verify(vec![a, b, c, d]);
+        assert!(errs.iter().all(|e| !e.contains("circular")),
+            "diamond should not be a cycle: {:?}", errs);
+    }
+
+    // ── Emit tests ──────────────────────────────────────────
+
+    #[test]
+    fn emit_produces_valid_program() {
+        use crate::emit::Emitter;
+        let mut m = module("Test");
+        m.enums.push(bare_enum("Element", &["Fire", "Earth"]));
+        m.exports.push(ExportItem::Type_(TypeName("Element".into())));
+
+        let modules = vec![m];
+        let idx = Index::build(&modules);
+        let program = Emitter::emit(&modules, &idx);
+
+        assert_eq!(program.modules.len(), 1);
+        assert!(!program.resolution.modules.is_empty());
+        assert!(!program.resolution.types.is_empty());
+    }
+
+    #[test]
+    fn emit_resolution_table_sorted() {
+        use crate::emit::Emitter;
+        let mut m1 = module("Beta");
+        m1.enums.push(bare_enum("Y", &["V"]));
+        let mut m2 = module("Alpha");
+        m2.enums.push(bare_enum("X", &["V"]));
+
+        let modules = vec![m1, m2];
+        let idx = Index::build(&modules);
+        let program = Emitter::emit(&modules, &idx);
+
+        // Modules should be sorted by name
+        assert_eq!(program.resolution.modules[0].name, "Alpha");
+        assert_eq!(program.resolution.modules[1].name, "Beta");
+    }
+
+    #[test]
+    fn emit_serializes_to_rkyv() {
+        use crate::emit::Emitter;
+        let mut m = module("Test");
+        m.enums.push(bare_enum("E", &["V"]));
+
+        let modules = vec![m];
+        let idx = Index::build(&modules);
+        let program = Emitter::emit(&modules, &idx);
+
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&program);
+        assert!(bytes.is_ok(), "serialization should succeed");
+        assert!(bytes.unwrap().len() > 0);
+    }
 }
