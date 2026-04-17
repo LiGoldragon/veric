@@ -1,0 +1,16 @@
+[package]
+name = "veric"
+version = "0.1.0"
+edition = "2021"
+description = "veric — aski program verifier: per-module rkyv → verified program rkyv"
+
+[[bin]]
+name = "veric"
+path = "src/main.rs"
+
+[dependencies]
+sema-core = { path = "flake-crates/sema-core" }
+rkyv = { version = "0.8", default-features = false, features = [
+    "little_endian",
+    "alloc",
+] }
