@@ -1,7 +1,9 @@
 /// Verify — structural verification of the aski program.
 ///
 /// Five tiers. All tiers run even if earlier tiers have errors.
+/// All methods on Verifier struct.
 
+use std::collections::HashSet;
 use sema_core::aski_core::*;
 use crate::index::Index;
 
@@ -15,12 +17,12 @@ pub struct Verifier<'a> {
     modules: &'a [ModuleDef],
     index: &'a Index,
     errors: Vec<VerifyError>,
-    /// Generic params in scope for the current definition
+    /// Generic params currently in scope
     generic_scope: Vec<String>,
 }
 
 impl<'a> Verifier<'a> {
-    pub fn verify(modules: &[ModuleDef], index: &Index) -> Vec<VerifyError> {
+    pub fn verify(modules: &'a [ModuleDef], index: &'a Index) -> Vec<VerifyError> {
         let mut v = Verifier {
             modules,
             index,
@@ -45,28 +47,39 @@ impl<'a> Verifier<'a> {
     // ── Tier 1: Import resolution ───────────────────────────
 
     fn tier1_imports(&mut self) {
+        // Circular import detection
+        let cycles = self.index.find_import_cycles();
+        for cycle in &cycles {
+            let names: Vec<&str> = cycle.iter()
+                .map(|&mi| self.modules[mi].name.0.as_str())
+                .collect();
+            self.err(&names[0], format!(
+                "circular import: {}", names.join(" → ")));
+        }
+
         for (mi, m) in self.modules.iter().enumerate() {
             let mod_name = &m.name.0;
 
-            // Verify exports reference real definitions
+            // Export validity — exported names must exist
             for exp in &m.exports {
                 match exp {
                     ExportItem::Type_(name) => {
                         if !self.index.types.contains_key(&(mi, name.0.clone())) {
                             self.err(mod_name, format!(
-                                "exports type '{}' but it is not defined in this module", name.0));
+                                "exports type '{}' but it is not defined", name.0));
                         }
                     }
                     ExportItem::Trait(name) => {
                         if !self.index.traits.contains_key(&(mi, name.0.clone())) {
                             self.err(mod_name, format!(
-                                "exports trait '{}' but it is not defined in this module", name.0));
+                                "exports trait '{}' but it is not defined", name.0));
                         }
                     }
                 }
             }
 
-            // Verify imports
+            // Import resolution
+            let mut imported_names: HashSet<String> = HashSet::new();
             for imp in &m.imports {
                 let src_name = &imp.source.0;
                 match self.index.modules.get(src_name) {
@@ -75,29 +88,31 @@ impl<'a> Verifier<'a> {
                             "imports from module '{}' which does not exist", src_name));
                     }
                     Some(&src_mi) => {
-                        let src_mod = &self.modules[src_mi];
                         for item in &imp.names {
-                            match item {
-                                ImportItem::Type_(name) => {
-                                    let exported = src_mod.exports.iter().any(|e| {
-                                        matches!(e, ExportItem::Type_(n) if n.0 == name.0)
-                                    });
-                                    if !exported {
-                                        self.err(mod_name, format!(
-                                            "imports type '{}' from '{}' but it is not exported",
-                                            name.0, src_name));
-                                    }
-                                }
-                                ImportItem::Trait(name) => {
-                                    let exported = src_mod.exports.iter().any(|e| {
-                                        matches!(e, ExportItem::Trait(n) if n.0 == name.0)
-                                    });
-                                    if !exported {
-                                        self.err(mod_name, format!(
-                                            "imports trait '{}' from '{}' but it is not exported",
-                                            name.0, src_name));
-                                    }
-                                }
+                            let (name, is_trait) = match item {
+                                ImportItem::Type_(n) => (&n.0, false),
+                                ImportItem::Trait(n) => (&n.0, true),
+                            };
+
+                            // Check export exists in source module
+                            let exported = if is_trait {
+                                self.index.exported_traits.get(&src_mi)
+                                    .map_or(false, |s| s.contains(name))
+                            } else {
+                                self.index.exported_types.get(&src_mi)
+                                    .map_or(false, |s| s.contains(name))
+                            };
+                            if !exported {
+                                self.err(mod_name, format!(
+                                    "imports {} '{}' from '{}' but it is not exported",
+                                    if is_trait { "trait" } else { "type" },
+                                    name, src_name));
+                            }
+
+                            // Name collision detection
+                            if !imported_names.insert(name.clone()) {
+                                self.err(mod_name, format!(
+                                    "name '{}' imported more than once", name));
                             }
                         }
                     }
@@ -113,21 +128,24 @@ impl<'a> Verifier<'a> {
             let mod_name = m.name.0.clone();
 
             for e in &m.enums {
-                self.generic_scope = e.generic_params.iter()
-                    .map(|p| p.name.0.clone()).collect();
-                self.verify_enum_children(mi, &mod_name, &e.children);
+                self.with_generics(&e.generic_params, |v| {
+                    v.verify_enum_children(mi, &mod_name, &e.children);
+                    v.verify_generic_bounds(mi, &mod_name, &e.generic_params);
+                });
             }
 
             for s in &m.structs {
-                self.generic_scope = s.generic_params.iter()
-                    .map(|p| p.name.0.clone()).collect();
-                self.verify_struct_children(mi, &mod_name, &s.children);
+                self.with_generics(&s.generic_params, |v| {
+                    v.verify_struct_children(mi, &mod_name, &s.children);
+                    v.verify_generic_bounds(mi, &mod_name, &s.generic_params);
+                });
             }
 
             for n in &m.newtypes {
-                self.generic_scope = n.generic_params.iter()
-                    .map(|p| p.name.0.clone()).collect();
-                self.verify_type_expr(mi, &mod_name, &n.wraps);
+                self.with_generics(&n.generic_params, |v| {
+                    v.verify_type_expr(mi, &mod_name, &n.wraps);
+                    v.verify_generic_bounds(mi, &mod_name, &n.generic_params);
+                });
             }
 
             for c in &m.consts {
@@ -135,41 +153,40 @@ impl<'a> Verifier<'a> {
                 self.verify_type_expr(mi, &mod_name, &c.typ);
             }
 
-            // Verify types in trait declarations
             for td in &m.trait_decls {
-                self.generic_scope = td.generic_params.iter()
-                    .map(|p| p.name.0.clone()).collect();
-                for bound in &td.super_traits {
-                    self.verify_trait_bound(mi, &mod_name, bound);
-                }
-                for sig in &td.signatures {
-                    self.verify_method_sig(mi, &mod_name, sig);
-                }
+                self.with_generics(&td.generic_params, |v| {
+                    for bound in &td.super_traits {
+                        v.verify_trait_bound(mi, &mod_name, bound);
+                    }
+                    for sig in &td.signatures {
+                        v.verify_method_types(mi, &mod_name, &sig.generic_params,
+                            &sig.params, &sig.return_type);
+                    }
+                });
             }
 
-            // Verify types in trait implementations
             for ti in &m.trait_impls {
-                self.generic_scope = ti.generic_params.iter()
-                    .map(|p| p.name.0.clone()).collect();
-                if !self.index.trait_exists(mi, &ti.trait_name.0) {
-                    self.err(&mod_name, format!(
-                        "implements trait '{}' which does not exist", ti.trait_name.0));
-                }
-                self.verify_type_expr(mi, &mod_name, &ti.typ);
-                for arg in &ti.trait_args {
-                    self.verify_type_expr(mi, &mod_name, arg);
-                }
-                for method in &ti.methods {
-                    self.verify_method_sig_from_def(mi, &mod_name, method);
-                }
+                self.with_generics(&ti.generic_params, |v| {
+                    if !v.index.trait_exists(mi, &ti.trait_name.0) {
+                        v.err(&mod_name, format!(
+                            "implements trait '{}' which does not exist", ti.trait_name.0));
+                    }
+                    v.verify_type_expr(mi, &mod_name, &ti.typ);
+                    for arg in &ti.trait_args {
+                        v.verify_type_expr(mi, &mod_name, arg);
+                    }
+                    for method in &ti.methods {
+                        v.verify_method_types(mi, &mod_name, &method.generic_params,
+                            &method.params, &method.return_type);
+                    }
+                });
             }
 
-            // Verify FFI
             for f in &m.ffi {
                 for func in &f.functions {
                     self.generic_scope.clear();
                     for p in &func.params {
-                        self.verify_param(mi, &mod_name, p);
+                        self.verify_param_type(mi, &mod_name, p);
                     }
                     if let Some(rt) = &func.return_type {
                         self.verify_type_expr(mi, &mod_name, rt);
@@ -179,6 +196,38 @@ impl<'a> Verifier<'a> {
 
             self.generic_scope.clear();
         }
+    }
+
+    fn with_generics(&mut self, params: &[GenericParamDef], f: impl FnOnce(&mut Self)) {
+        let saved = self.generic_scope.clone();
+        self.generic_scope.extend(params.iter().map(|p| p.name.0.clone()));
+        f(self);
+        self.generic_scope = saved;
+    }
+
+    fn verify_generic_bounds(&mut self, mi: usize, mod_name: &str, params: &[GenericParamDef]) {
+        for p in params {
+            for bound in &p.bounds {
+                self.verify_trait_bound(mi, mod_name, bound);
+            }
+            if let Some(default) = &p.default {
+                self.verify_type_expr(mi, mod_name, default);
+            }
+        }
+    }
+
+    fn verify_method_types(&mut self, mi: usize, mod_name: &str,
+        method_generics: &[GenericParamDef], params: &[Param], return_type: &Option<TypeExpr>)
+    {
+        let saved = self.generic_scope.clone();
+        self.generic_scope.extend(method_generics.iter().map(|p| p.name.0.clone()));
+        for p in params {
+            self.verify_param_type(mi, mod_name, p);
+        }
+        if let Some(rt) = return_type {
+            self.verify_type_expr(mi, mod_name, rt);
+        }
+        self.generic_scope = saved;
     }
 
     fn verify_enum_children(&mut self, mi: usize, mod_name: &str, children: &[EnumChild]) {
@@ -194,18 +243,14 @@ impl<'a> Verifier<'a> {
                     }
                 }
                 EnumChild::NestedEnum(e) => {
-                    let saved = self.generic_scope.clone();
-                    self.generic_scope.extend(
-                        e.generic_params.iter().map(|p| p.name.0.clone()));
-                    self.verify_enum_children(mi, mod_name, &e.children);
-                    self.generic_scope = saved;
+                    self.with_generics(&e.generic_params, |v| {
+                        v.verify_enum_children(mi, mod_name, &e.children);
+                    });
                 }
                 EnumChild::NestedStruct(s) => {
-                    let saved = self.generic_scope.clone();
-                    self.generic_scope.extend(
-                        s.generic_params.iter().map(|p| p.name.0.clone()));
-                    self.verify_struct_children(mi, mod_name, &s.children);
-                    self.generic_scope = saved;
+                    self.with_generics(&s.generic_params, |v| {
+                        v.verify_struct_children(mi, mod_name, &s.children);
+                    });
                 }
             }
         }
@@ -218,25 +263,20 @@ impl<'a> Verifier<'a> {
                     self.verify_type_expr(mi, mod_name, typ);
                 }
                 StructChild::SelfTypedField { name, .. } => {
-                    // Field name IS the type — verify type exists
                     if !self.index.type_exists(mi, &name.0) {
                         self.err(mod_name, format!(
-                            "self-typed field '{}' but no type '{}' exists", name.0, name.0));
+                            "self-typed field '{}': type '{}' not found", name.0, name.0));
                     }
                 }
                 StructChild::NestedEnum(e) => {
-                    let saved = self.generic_scope.clone();
-                    self.generic_scope.extend(
-                        e.generic_params.iter().map(|p| p.name.0.clone()));
-                    self.verify_enum_children(mi, mod_name, &e.children);
-                    self.generic_scope = saved;
+                    self.with_generics(&e.generic_params, |v| {
+                        v.verify_enum_children(mi, mod_name, &e.children);
+                    });
                 }
                 StructChild::NestedStruct(s) => {
-                    let saved = self.generic_scope.clone();
-                    self.generic_scope.extend(
-                        s.generic_params.iter().map(|p| p.name.0.clone()));
-                    self.verify_struct_children(mi, mod_name, &s.children);
-                    self.generic_scope = saved;
+                    self.with_generics(&s.generic_params, |v| {
+                        v.verify_struct_children(mi, mod_name, &s.children);
+                    });
                 }
             }
         }
@@ -251,15 +291,16 @@ impl<'a> Verifier<'a> {
                 }
             }
             TypeExpr::Application(app) => {
-                if !self.index.type_exists(mi, &app.constructor.0)
-                    && !self.generic_scope.contains(&app.constructor.0) {
+                let name = &app.constructor.0;
+                if !self.index.type_exists(mi, name)
+                    && !self.generic_scope.contains(name) {
                     self.err(mod_name, format!(
-                        "type constructor '{}' not found", app.constructor.0));
-                } else if let Some(expected) = self.index.type_arity(mi, &app.constructor.0) {
+                        "type constructor '{}' not found", name));
+                } else if let Some(expected) = self.index.type_arity(mi, name) {
                     if app.args.len() != expected {
                         self.err(mod_name, format!(
                             "'{}' expects {} type arguments, got {}",
-                            app.constructor.0, expected, app.args.len()));
+                            name, expected, app.args.len()));
                     }
                 }
                 for arg in &app.args {
@@ -328,7 +369,7 @@ impl<'a> Verifier<'a> {
         }
     }
 
-    fn verify_param(&mut self, mi: usize, mod_name: &str, param: &Param) {
+    fn verify_param_type(&mut self, mi: usize, mod_name: &str, param: &Param) {
         match param {
             Param::BorrowNamed { typ, .. }
             | Param::MutBorrowNamed { typ, .. }
@@ -340,32 +381,6 @@ impl<'a> Verifier<'a> {
         }
     }
 
-    fn verify_method_sig(&mut self, mi: usize, mod_name: &str, sig: &MethodSig) {
-        let saved = self.generic_scope.clone();
-        self.generic_scope.extend(
-            sig.generic_params.iter().map(|p| p.name.0.clone()));
-        for p in &sig.params {
-            self.verify_param(mi, mod_name, p);
-        }
-        if let Some(rt) = &sig.return_type {
-            self.verify_type_expr(mi, mod_name, rt);
-        }
-        self.generic_scope = saved;
-    }
-
-    fn verify_method_sig_from_def(&mut self, mi: usize, mod_name: &str, method: &MethodDef) {
-        let saved = self.generic_scope.clone();
-        self.generic_scope.extend(
-            method.generic_params.iter().map(|p| p.name.0.clone()));
-        for p in &method.params {
-            self.verify_param(mi, mod_name, p);
-        }
-        if let Some(rt) = &method.return_type {
-            self.verify_type_expr(mi, mod_name, rt);
-        }
-        self.generic_scope = saved;
-    }
-
     // ── Tier 3: Trait structure ──────────────────────────────
 
     fn tier3_trait_structure(&mut self) {
@@ -373,41 +388,74 @@ impl<'a> Verifier<'a> {
             let mod_name = &m.name.0;
 
             for ti in &m.trait_impls {
-                // Find the trait declaration
-                let decl = self.find_trait_decl(m, &ti.trait_name.0);
-                let decl = match decl {
+                let decl = match self.find_trait_decl(m, &ti.trait_name.0) {
                     Some(d) => d,
                     None => continue, // Already reported in tier 2
                 };
 
-                // Check method completeness
+                // Method completeness — every declared method must be implemented
                 for sig in &decl.signatures {
-                    let found = ti.methods.iter().any(|m| m.name.0 == sig.name.0);
-                    if !found {
+                    if !ti.methods.iter().any(|m| m.name.0 == sig.name.0) {
                         self.err(mod_name, format!(
-                            "trait impl for '{}' missing method '{}'",
+                            "impl '{}': missing method '{}'",
                             ti.trait_name.0, sig.name.0));
                     }
                 }
 
-                // Check no extraneous methods
+                // No extraneous methods
                 for method in &ti.methods {
-                    let found = decl.signatures.iter().any(|s| s.name.0 == method.name.0);
-                    if !found {
+                    if !decl.signatures.iter().any(|s| s.name.0 == method.name.0) {
                         self.err(mod_name, format!(
-                            "trait impl for '{}' has method '{}' not in declaration",
+                            "impl '{}': method '{}' not in declaration",
                             ti.trait_name.0, method.name.0));
                     }
                 }
 
-                // Check param count matches
+                // Signature consistency for each matching method
                 for method in &ti.methods {
                     if let Some(sig) = decl.signatures.iter().find(|s| s.name.0 == method.name.0) {
+                        // Param count
                         if method.params.len() != sig.params.len() {
                             self.err(mod_name, format!(
-                                "method '{}' in impl of '{}': {} params, declaration has {}",
-                                method.name.0, ti.trait_name.0,
+                                "impl '{}' method '{}': {} params, declaration has {}",
+                                ti.trait_name.0, method.name.0,
                                 method.params.len(), sig.params.len()));
+                        }
+
+                        // Return type presence must match
+                        if method.return_type.is_some() != sig.return_type.is_some() {
+                            self.err(mod_name, format!(
+                                "impl '{}' method '{}': return type {}",
+                                ti.trait_name.0, method.name.0,
+                                if sig.return_type.is_some() {
+                                    "expected but missing"
+                                } else {
+                                    "present but not in declaration"
+                                }));
+                        }
+
+                        // Self parameter compatibility
+                        if !method.params.is_empty() && !sig.params.is_empty() {
+                            let impl_self = Self::self_kind(&method.params[0]);
+                            let decl_self = Self::self_kind(&sig.params[0]);
+                            if impl_self != decl_self {
+                                self.err(mod_name, format!(
+                                    "impl '{}' method '{}': self parameter kind mismatch",
+                                    ti.trait_name.0, method.name.0));
+                            }
+                        }
+                    }
+                }
+
+                // Associated types — every required associated type must be provided
+                for at in &decl.associated_types {
+                    if at.default.is_none() {
+                        let provided = ti.associated_types.iter()
+                            .any(|a| a.name.0 == at.name.0);
+                        if !provided {
+                            self.err(mod_name, format!(
+                                "impl '{}': missing associated type '{}'",
+                                ti.trait_name.0, at.name.0));
                         }
                     }
                 }
@@ -415,20 +463,27 @@ impl<'a> Verifier<'a> {
         }
     }
 
+    fn self_kind(param: &Param) -> u8 {
+        match param {
+            Param::BorrowSelf => 0,
+            Param::MutBorrowSelf => 1,
+            Param::OwnedSelf => 2,
+            _ => 3, // non-self
+        }
+    }
+
     fn find_trait_decl(&self, module: &'a ModuleDef, trait_name: &str) -> Option<&'a TraitDeclDef> {
-        // Check current module
         if let Some(td) = module.trait_decls.iter().find(|t| t.name.0 == trait_name) {
             return Some(td);
         }
-        // Check imported modules
         for imp in &module.imports {
             let has_trait = imp.names.iter().any(|n| {
                 matches!(n, ImportItem::Trait(t) if t.0 == trait_name)
             });
             if has_trait {
                 if let Some(&src_mi) = self.index.modules.get(&imp.source.0) {
-                    let src = &self.modules[src_mi];
-                    if let Some(td) = src.trait_decls.iter().find(|t| t.name.0 == trait_name) {
+                    if let Some(td) = self.modules[src_mi].trait_decls.iter()
+                        .find(|t| t.name.0 == trait_name) {
                         return Some(td);
                     }
                 }
@@ -437,33 +492,48 @@ impl<'a> Verifier<'a> {
         None
     }
 
-    // ── Tier 4: Scope uniqueness ────────────────────────────
+    // ── Tier 4: Scopes ──────────────────────────────────────
 
     fn tier4_scopes(&mut self) {
         for m in self.modules.iter() {
             let mod_name = &m.name.0;
-            let mut type_names: Vec<&str> = Vec::new();
+
+            // Type name uniqueness at module scope
+            let mut all_names: HashSet<String> = HashSet::new();
 
             for e in &m.enums {
-                if type_names.contains(&e.name.0.as_str()) {
+                if !all_names.insert(e.name.0.clone()) {
                     self.err(mod_name, format!("duplicate type name '{}'", e.name.0));
                 }
-                type_names.push(&e.name.0);
+                // Check nested types don't collide with top-level
+                self.check_nested_enum_collisions(mod_name, &e.children, &all_names);
             }
             for s in &m.structs {
-                if type_names.contains(&s.name.0.as_str()) {
+                if !all_names.insert(s.name.0.clone()) {
                     self.err(mod_name, format!("duplicate type name '{}'", s.name.0));
                 }
-                type_names.push(&s.name.0);
+                self.check_nested_struct_collisions(mod_name, &s.children, &all_names);
             }
             for n in &m.newtypes {
-                if type_names.contains(&n.name.0.as_str()) {
+                if !all_names.insert(n.name.0.clone()) {
                     self.err(mod_name, format!("duplicate type name '{}'", n.name.0));
                 }
-                type_names.push(&n.name.0);
+            }
+            for c in &m.consts {
+                if !all_names.insert(c.name.0.clone()) {
+                    self.err(mod_name, format!("duplicate name '{}'", c.name.0));
+                }
             }
 
-            // Check generic param uniqueness per definition
+            // Trait name uniqueness
+            let mut trait_names: HashSet<String> = HashSet::new();
+            for td in &m.trait_decls {
+                if !trait_names.insert(td.name.0.clone()) {
+                    self.err(mod_name, format!("duplicate trait name '{}'", td.name.0));
+                }
+            }
+
+            // Generic param uniqueness per definition
             for e in &m.enums {
                 self.check_generic_uniqueness(mod_name, &e.name.0, &e.generic_params);
             }
@@ -476,14 +546,57 @@ impl<'a> Verifier<'a> {
         }
     }
 
+    fn check_nested_enum_collisions(&mut self, mod_name: &str, children: &[EnumChild], top_level: &HashSet<String>) {
+        for child in children {
+            match child {
+                EnumChild::NestedEnum(e) => {
+                    if top_level.contains(&e.name.0) {
+                        self.err(mod_name, format!(
+                            "nested type '{}' collides with top-level name", e.name.0));
+                    }
+                    self.check_nested_enum_collisions(mod_name, &e.children, top_level);
+                }
+                EnumChild::NestedStruct(s) => {
+                    if top_level.contains(&s.name.0) {
+                        self.err(mod_name, format!(
+                            "nested type '{}' collides with top-level name", s.name.0));
+                    }
+                    self.check_nested_struct_collisions(mod_name, &s.children, top_level);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn check_nested_struct_collisions(&mut self, mod_name: &str, children: &[StructChild], top_level: &HashSet<String>) {
+        for child in children {
+            match child {
+                StructChild::NestedEnum(e) => {
+                    if top_level.contains(&e.name.0) {
+                        self.err(mod_name, format!(
+                            "nested type '{}' collides with top-level name", e.name.0));
+                    }
+                    self.check_nested_enum_collisions(mod_name, &e.children, top_level);
+                }
+                StructChild::NestedStruct(s) => {
+                    if top_level.contains(&s.name.0) {
+                        self.err(mod_name, format!(
+                            "nested type '{}' collides with top-level name", s.name.0));
+                    }
+                    self.check_nested_struct_collisions(mod_name, &s.children, top_level);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn check_generic_uniqueness(&mut self, mod_name: &str, type_name: &str, params: &[GenericParamDef]) {
-        let mut seen = Vec::new();
+        let mut seen = HashSet::new();
         for p in params {
-            if seen.contains(&p.name.0.as_str()) {
+            if !seen.insert(&p.name.0) {
                 self.err(mod_name, format!(
                     "duplicate generic param '{}' in '{}'", p.name.0, type_name));
             }
-            seen.push(&p.name.0);
         }
     }
 
@@ -493,19 +606,20 @@ impl<'a> Verifier<'a> {
         for m in self.modules.iter() {
             let mod_name = &m.name.0;
             for c in &m.consts {
-                self.verify_const_value(mod_name, c);
+                self.verify_const(mod_name, c);
             }
         }
     }
 
-    fn verify_const_value(&mut self, mod_name: &str, c: &ConstDef) {
+    fn verify_const(&mut self, mod_name: &str, c: &ConstDef) {
         let type_name = match &c.typ {
             TypeExpr::Named(n) => Some(n.0.as_str()),
             _ => None,
         };
 
         if let Some(tn) = type_name {
-            let ok = match (&c.value, tn) {
+            // Type/value compatibility
+            let compatible = match (&c.value, tn) {
                 (LiteralValue::Int(_), "U8" | "U16" | "U32" | "U64"
                     | "I8" | "I16" | "I32" | "I64") => true,
                 (LiteralValue::Float(_), "F32" | "F64") => true,
@@ -514,10 +628,30 @@ impl<'a> Verifier<'a> {
                 (LiteralValue::Char(_), "Char") => true,
                 _ => false,
             };
-            if !ok {
+            if !compatible {
                 self.err(mod_name, format!(
-                    "const '{}' declared as '{}' but value is {:?}",
+                    "const '{}': type '{}' incompatible with value {:?}",
                     c.name.0, tn, c.value));
+            }
+
+            // Integer range validation
+            if let LiteralValue::Int(v) = &c.value {
+                let in_range = match tn {
+                    "U8" => *v >= 0 && *v <= 255,
+                    "U16" => *v >= 0 && *v <= 65535,
+                    "U32" => *v >= 0 && *v <= u32::MAX as i64,
+                    "U64" => *v >= 0,
+                    "I8" => *v >= -128 && *v <= 127,
+                    "I16" => *v >= -32768 && *v <= 32767,
+                    "I32" => *v >= i32::MIN as i64 && *v <= i32::MAX as i64,
+                    "I64" => true,
+                    _ => true,
+                };
+                if !in_range {
+                    self.err(mod_name, format!(
+                        "const '{}': value {} out of range for '{}'",
+                        c.name.0, v, tn));
+                }
             }
         }
     }
