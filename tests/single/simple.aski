@@ -1,0 +1,12 @@
+;; simple.aski — single module, no imports
+
+(Elements Element Quality)
+
+(Element Fire Earth Air Water)
+(Quality Passionate Grounded Intellectual Intuitive)
+
+{Point (Horizontal F64) (Vertical F64)}
+
+Counter U32
+
+{| MaxSigns U32 12 |}

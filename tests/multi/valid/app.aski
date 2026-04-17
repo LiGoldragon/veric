@@ -1,0 +1,7 @@
+;; app.aski — imports from Core
+
+(App Element [Core Token ParseState])
+
+(Element Fire Earth Air Water)
+
+{Parser (State ParseState) (Current Token)}

@@ -1,0 +1,5 @@
+;; circular_b.aski — imports from A (which imports from B)
+
+(B Y [A X])
+
+(Y Three Four)

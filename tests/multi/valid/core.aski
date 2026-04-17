@@ -1,0 +1,6 @@
+;; core.aski — base module, exports types
+
+(Core Token ParseState)
+
+(Token (Ident String) (Number I64) Newline)
+(ParseState Ready Parsing Done)
