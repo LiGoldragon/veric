@@ -42,7 +42,7 @@
         sema-core-source = sema-core.packages.${system}.source;
         askicc-bin = askicc.packages.${system}.askicc;
         askic-bin = askic.packages.${system}.askic;
-        dialect-data = askicc.packages.${system}.dialect-data;
+        dsls-data = askicc.packages.${system}.dsls-data;
 
         src = pkgs.lib.cleanSourceWith {
           src = ./.;
@@ -71,7 +71,7 @@
         # Integration test: .aski → askic → veric
         integration-test = pkgs.runCommand "veric-integration-test" {
           nativeBuildInputs = [ askic-bin veric ];
-          DIALECT_DATA = "${dialect-data}/dialects.rkyv";
+          DIALECT_DATA = "${dsls-data}/dsls.rkyv";
         } ''
           mkdir -p $out work
 
