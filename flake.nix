@@ -9,8 +9,8 @@
     };
     crane.url = "github:ipetkov/crane";
     flake-utils.url = "github:numtide/flake-utils";
-    sema-core = {
-      url = "github:LiGoldragon/sema-core";
+    veri-core = {
+      url = "github:LiGoldragon/veri-core";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.fenix.follows = "fenix";
       inputs.crane.follows = "crane";
@@ -32,14 +32,14 @@
     };
   };
 
-  outputs = { self, nixpkgs, fenix, crane, flake-utils, sema-core, askicc, askic, ... }:
+  outputs = { self, nixpkgs, fenix, crane, flake-utils, veri-core, askicc, askic, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         toolchain = fenix.packages.${system}.stable.toolchain;
         craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
 
-        sema-core-source = sema-core.packages.${system}.source;
+        veri-core-source = veri-core.packages.${system}.source;
         askicc-bin = askicc.packages.${system}.askicc;
         askic-bin = askic.packages.${system}.askic;
         dsls-data = askicc.packages.${system}.dsls-data;
@@ -57,7 +57,7 @@
           version = "0.1.0";
           postUnpack = ''
             mkdir -p $sourceRoot/flake-crates
-            cp -r ${sema-core-source} $sourceRoot/flake-crates/sema-core
+            cp -r ${veri-core-source} $sourceRoot/flake-crates/veri-core
             chmod -R +w $sourceRoot/flake-crates
           '';
         };

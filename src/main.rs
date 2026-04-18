@@ -6,7 +6,7 @@
 /// Usage: veric <module.rkyv>... [-o program.rkyv]
 
 use std::fs;
-use sema_core::aski_core::ModuleDef;
+use veri_core::aski_core::ModuleDef;
 use veric::{loader, index, verify, emit};
 
 struct Veric {

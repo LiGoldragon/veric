@@ -4,7 +4,7 @@
 /// All methods on Verifier struct.
 
 use std::collections::HashSet;
-use sema_core::aski_core::*;
+use veri_core::aski_core::*;
 use crate::index::Index;
 
 #[derive(Debug)]

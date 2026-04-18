@@ -9,7 +9,7 @@ name = "veric"
 path = "src/main.rs"
 
 [dependencies]
-sema-core = { path = "flake-crates/sema-core" }
+veri-core = { path = "flake-crates/veri-core" }
 rkyv = { version = "0.8", default-features = false, features = [
     "little_endian",
     "alloc",

@@ -1,6 +1,6 @@
 /// Loader — deserialize ModuleDef from rkyv bytes.
 
-use sema_core::aski_core::{ModuleDef, ArchivedModuleDef};
+use veri_core::aski_core::{ModuleDef, ArchivedModuleDef};
 use rkyv::Deserialize;
 use rkyv::rancor::{Error as RkyvError, Strategy};
 

@@ -2,8 +2,8 @@
 ///
 /// All methods on Emitter struct.
 
-use sema_core::*;
-use sema_core::aski_core::*;
+use veri_core::*;
+use veri_core::aski_core::*;
 use crate::index::{Index, TypeKind as IdxTypeKind};
 
 pub struct Emitter;

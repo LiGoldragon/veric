@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use sema_core::aski_core::*;
+    use veri_core::aski_core::*;
     use crate::index::Index;
     use crate::verify::Verifier;
 

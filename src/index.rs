@@ -3,7 +3,7 @@
 /// All methods on Index struct.
 
 use std::collections::{HashMap, HashSet};
-use sema_core::aski_core::*;
+use veri_core::aski_core::*;
 
 pub struct Index {
     /// Module name → position in Vec<ModuleDef>
