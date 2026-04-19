@@ -28,26 +28,30 @@ semac        — program.rkyv + domain types → .sema (pure binary)
   - Type-graph well-formedness (no dangling refs)
   - Basic trait-implementation sanity
 
-## v0.18 Status: BROKEN — Pending Port
+## v0.19 Status: BROKEN — Pending Port (doubly blocked)
 
 veric's source code references the PRE-v0.18 aski-core type names:
 `ModuleDef`, `EnumDef`, `StructDef`, `TraitDeclDef`, `MethodDef`,
-`TypeExpr`, `GenericParamDef`, and old field names like
-`generic_params` (now `generics`) and `Import.names` (now split
-into `Import.objects` + `Import.actions`).
+`TypeExpr`, `GenericParamDef`, and old field names.
+
+**Double blockage now in v0.19**: aski-core has changed again —
+LocalDecl unified, Loop is a struct, Module.Exports flat
+`Vec<TypeName>`, InstanceType retired, etc. veric's ~75 compile
+errors from v0.18 are now compounded by v0.19 shape changes.
 
 **Mass-rename doesn't suffice** — the shapes of many entities
-changed (e.g., Param is now 7 nested variants instead of a single
-enum; Type is enum-first with Borrowed/MutBorrowed; Origins and
-view types exist at multiple positions). veric needs a port-level
-pass.
+changed. veric needs a port-level pass.
+
+**Also: veric is now blocked on askic.** Porting veric against
+guessed v0.19 shapes means rewriting twice. Wait until askic
+produces real per-module rkyv, then port against observed output.
 
 Test count pre-redesign: **45 unit tests + 4 nix integration tests
 passing**. They'll need corresponding updates or replacements.
 
 ## After the Port
 
-Once v0.18-compatible, veric will output veri-core types that match
+Once v0.19-compatible, veric will output veri-core types that match
 the D6 design:
 - Each entity carries its own `Vec<EntityRef>` of things it relates to
 - No separate Scope wrapper type — scope info embedded on entities
