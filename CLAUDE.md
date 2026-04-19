@@ -17,7 +17,7 @@ current aski-core.** Do not attempt to fix incrementally.
    when the `Def` suffix was dropped (StructDef → Struct, etc.).
 
 2. **Pre-v0.18 field names** — uses `generic_params`, `Import.names`,
-   `Module.Exports`/`Module.Ffis`, and others that no longer exist.
+   `Module.Exports`/`Module.Rfis`, and others that no longer exist.
 
 3. **Pre-v0.19 shape changes** — Param became 7 nested variants,
    Type is enum-first with 6 variants, LocalDecl unified, Loop is
@@ -27,8 +27,8 @@ current aski-core.** Do not attempt to fix incrementally.
 4. **Pre-v0.20 shape changes** — AssociatedTypes added to TraitDecl,
    AssociatedTypeBindings to TraitImpl, Type.SelfAssoc variant,
    Expr.SelfRef variant, Module.Exports retired entirely,
-   Module.Ffis retired, Visibility is now declaration-local.
-   `.ffi` surface handles FFI declarations separately.
+   Module.Rfis retired, Visibility is now declaration-local.
+   `.rfi` surface handles RFI declarations separately.
 
 5. **~75 compile errors** on origin. Untouched since aski-core v0.18
    redesign landed. Every v0.19 and v0.20 change added to the gap.
