@@ -4,16 +4,62 @@ Reads per-module rkyv (produced by askic, conforming to aski-core
 types) and produces one `program.rkyv` containing the verified,
 linked program (conforming to veri-core types).
 
-## Role in the Pipeline
+## ⚠️ STATUS: STALE — Triply Broken (pre-v0.18, needs port to v0.20)
 
-```
-askic        — .aski source → per-module rkyv (aski-core types)
-veric        — per-module rkyv → program.rkyv (veri-core types) — THIS REPO
-domainc      — program.rkyv → Rust domain types (proc macro)
-semac        — program.rkyv + domain types → .sema (pure binary)
-```
+**Every source file in `src/` is stale and will not compile against
+current aski-core.** Do not attempt to fix incrementally.
 
-## What veric Does
+### Why it's stale
+
+1. **Pre-v0.18 type names** — references `ModuleDef`, `EnumDef`,
+   `StructDef`, `TraitDeclDef`, `MethodDef`, `TypeExpr`,
+   `GenericParamDef` throughout. These names were retired in v0.18
+   when the `Def` suffix was dropped (StructDef → Struct, etc.).
+
+2. **Pre-v0.18 field names** — uses `generic_params`, `Import.names`,
+   `Module.Exports`/`Module.Ffis`, and others that no longer exist.
+
+3. **Pre-v0.19 shape changes** — Param became 7 nested variants,
+   Type is enum-first with 6 variants, LocalDecl unified, Loop is
+   a struct, Module.Exports flat Vec<TypeName>, InstanceType retired.
+   veric's assumptions don't match any of this.
+
+4. **Pre-v0.20 shape changes** — AssociatedTypes added to TraitDecl,
+   AssociatedTypeBindings to TraitImpl, Type.SelfAssoc variant,
+   Expr.SelfRef variant, Module.Exports retired entirely,
+   Module.Ffis retired, Visibility is now declaration-local.
+   `.ffi` surface handles FFI declarations separately.
+
+5. **~75 compile errors** on origin. Untouched since aski-core v0.18
+   redesign landed. Every v0.19 and v0.20 change added to the gap.
+
+### How to update (when the time comes)
+
+**DO NOT PORT YET.** Two preconditions must hold first:
+
+1. **askic-assemble exists** and generates correct `aski_core::Entity`
+   output from the v0.20 dsls.rkyv.
+2. **askic produces real per-module rkyv** from actual .aski source
+   files.
+
+Without these, you'd be porting against guessed shapes of aski-core
+entities and would need to rewrite again when askic's actual output
+differs. That's the triple-rewrite trap — avoid it.
+
+When both preconditions hold:
+
+1. Read a real per-module .rkyv produced by askic and confirm the
+   aski-core::Module (v0.20 shape) structure you receive.
+2. **Full rewrite** of veric's parser/linker — not a rename pass.
+   Shape changes are too deep (Param variants, Type variants,
+   LocalDecl variants, AssociatedTypes, etc.).
+3. Produce output conforming to veri-core types (which themselves
+   need a D6 redesign — parallel typed entities with EntityRef
+   resolution baked in).
+4. Re-port 45 unit tests + 4 nix integration tests against the
+   new shape.
+
+### What veric Does (design, unchanged)
 
 - **Collects** all per-module rkyv files (one per .aski source file).
 - **Builds the global name table** — which module declares what.
@@ -28,30 +74,18 @@ semac        — program.rkyv + domain types → .sema (pure binary)
   - Type-graph well-formedness (no dangling refs)
   - Basic trait-implementation sanity
 
-## v0.19 Status: BROKEN — Pending Port (doubly blocked)
+## Role in the Pipeline
 
-veric's source code references the PRE-v0.18 aski-core type names:
-`ModuleDef`, `EnumDef`, `StructDef`, `TraitDeclDef`, `MethodDef`,
-`TypeExpr`, `GenericParamDef`, and old field names.
-
-**Double blockage now in v0.19**: aski-core has changed again —
-LocalDecl unified, Loop is a struct, Module.Exports flat
-`Vec<TypeName>`, InstanceType retired, etc. veric's ~75 compile
-errors from v0.18 are now compounded by v0.19 shape changes.
-
-**Mass-rename doesn't suffice** — the shapes of many entities
-changed. veric needs a port-level pass.
-
-**Also: veric is now blocked on askic.** Porting veric against
-guessed v0.19 shapes means rewriting twice. Wait until askic
-produces real per-module rkyv, then port against observed output.
-
-Test count pre-redesign: **45 unit tests + 4 nix integration tests
-passing**. They'll need corresponding updates or replacements.
+```
+askic        — .aski source → per-module rkyv (aski-core types)
+veric        — per-module rkyv → program.rkyv (veri-core types) — THIS REPO
+domainc      — program.rkyv → Rust domain types (proc macro)
+semac        — program.rkyv + domain types → .sema (pure binary)
+```
 
 ## After the Port
 
-Once v0.19-compatible, veric will output veri-core types that match
+Once v0.20-compatible, veric will output veri-core types that match
 the D6 design:
 - Each entity carries its own `Vec<EntityRef>` of things it relates to
 - No separate Scope wrapper type — scope info embedded on entities
@@ -59,8 +93,8 @@ the D6 design:
 
 ## Dependencies
 
-- aski-core (input types)
-- veri-core (output types) — was `sema-core`, renamed 2026-04-18
+- aski-core (input types, v0.20)
+- veri-core (output types, D6 redesign pending)
 - rkyv
 
 ## VCS
