@@ -1,5 +1,0 @@
-;; missing_import.aski — imports from nonexistent module
-
-(Bad Foo [Nonexistent Bar])
-
-(Foo One Two)

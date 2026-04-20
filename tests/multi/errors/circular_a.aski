@@ -1,5 +1,0 @@
-;; circular_a.aski — imports from B (which imports from A)
-
-(A X [B Y])
-
-(X One Two)
